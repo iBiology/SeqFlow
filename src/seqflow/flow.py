@@ -201,7 +201,6 @@ class Task(anytree.NodeMixin):
             inputs_need_to_update.append(i)
             outputs_need_to_update.append(o)
         if need_to_update:
-            print(len(need_to_update), self.processes, processes)
             if len(need_to_update) == 1 or self.processes == 1 or processes == 1:
                 process_mode, processes = 'sequential mode', 1
             else:
