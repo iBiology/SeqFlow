@@ -16,6 +16,7 @@ logger.add(sys.stderr, format="<light-green>[{time:YYYY-MM-DD HH:mm:ss}]</light-
 logger.add(sys.stderr, format="<level>{message}</level>", filter=lambda record: record["level"].name == "DEBUG")
 logger.add(sys.stderr, format="<light-green>[{time:HH:mm:ss}]</light-green> <level>{message}</level>", level="INFO")
 
+
 class task:
     tasks = {}
     
@@ -39,6 +40,7 @@ class task:
                                              self.outputs, self.kind, self.parent, self.follow,
                                              self.processes, self.dirs, self.cleanups, self.force_cleanup,
                                              self.function)
+        
         @functools.wraps(function)
         def wrapper(*args, **kwargs):
             result = function(*args, **kwargs)
@@ -75,7 +77,7 @@ def delete_path(path):
 class Task(anytree.NodeMixin):
     def __init__(self, name, description='', inputs='', outputs='', kind='', parent=None,
                  follow=None, processes=1, dirs=None, cleanups=None, force_cleanup=False, executor=None,
-                 children=None):
+                 checkpoint=False):
         super(Task, self).__init__()
         self.name = name
         self.description = description if description else ''
@@ -104,6 +106,7 @@ class Task(anytree.NodeMixin):
         self.force_cleanup = force_cleanup
         self.executor = executor
         self.processor = None
+        self.checkpoint_file = f'.{self.name}.done' if checkpoint else ''
     
     def process(self, dry=True, processes=1, verbose=False):
         if self.outputs:
@@ -188,6 +191,8 @@ class Task(anytree.NodeMixin):
                 o1 = o[0]
             else:
                 raise TypeError(f'Invalid type for outputs item: {o}.')
+            if os.path.exists(self.checkpoint_file):
+                continue
             if kind in ('transform', 'split', 'merge'):
                 if os.path.exists(o1) and os.path.getmtime(o1) >= os.path.getmtime(i1):
                     continue
@@ -206,7 +211,6 @@ class Task(anytree.NodeMixin):
             else:
                 processes = min([processes, self.processes])
                 process_mode = f'parallel mode ({processes} processes)'
-            run_mode = 'sequential' if len(need_to_update) == 1 or self.processes == 1 else 'parallel'
             if dry:
                 create_list = '\n    '.join(need_to_create)
                 if create_list:
@@ -218,7 +222,7 @@ class Task(anytree.NodeMixin):
                 cleanup_list = '\n    '.join(need_to_cleanup)
                 if cleanup_list:
                     cleanup_list = f'The following file(s) will be deleted:\n    {cleanup_list}\n'
-                msg = '\n'.join([s for s in (create_list, update_list, create_list) if s])
+                msg = '\n'.join([s for s in (create_list, update_list, cleanup_list) if s])
                 logger.debug(f'Task [{self.name}]:\n{msg}')
             else:
                 if need_to_create:
@@ -233,6 +237,7 @@ class Task(anytree.NodeMixin):
                 self.yield_outputs = outputs
                 if need_to_cleanup:
                     _ = [delete_path(c) for c in need_to_cleanup]
+                touch_file(self.checkpoint_file)
         else:
             logger.debug(f'Task {self.name} already up to date.')
     
