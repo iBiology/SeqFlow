@@ -21,7 +21,7 @@ class task:
     tasks = {}
     
     def __init__(self, inputs=None, outputs=None, kwargs=None, kind='', parent=None, follow=None, processes=1,
-                 mkdir_before_run=None, cleanup_after_run=None, force_cleanup_on_error=False):
+                 mkdir_before_run=None, cleanup_after_run=None, force_cleanup_on_error=False, checkpoint=False):
         self.inputs = inputs
         self.outputs = outputs
         self.kwargs = kwargs
@@ -32,6 +32,7 @@ class task:
         self.dirs = mkdir_before_run
         self.cleanups = cleanup_after_run
         self.force_cleanup = force_cleanup_on_error
+        self.checkpoint = checkpoint
 
     def __call__(self, function):
         self.function = function
@@ -39,7 +40,7 @@ class task:
         task.tasks[function.__name__] = Task(function.__name__, function.__doc__, self.inputs,
                                              self.outputs, self.kind, self.parent, self.follow,
                                              self.processes, self.dirs, self.cleanups, self.force_cleanup,
-                                             self.function)
+                                             self.function, self.checkpoint)
         
         @functools.wraps(function)
         def wrapper(*args, **kwargs):
