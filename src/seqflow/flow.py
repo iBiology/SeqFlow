@@ -68,11 +68,11 @@ def delete_path(path):
             try:
                 os.unlink(path)
             except OSError:
-                logger.warning('Failed to delete file {path}.')
+                logger.warning(f'Failed to delete file {path}.')
         try:
             shutil.rmtree(path)
         except Exception as e:
-            logger.warning('Failed to delete directory {path}.')
+            logger.warning(f'Failed to delete directory {path}:\n{e}.')
 
 
 class Task(anytree.NodeMixin):
@@ -195,7 +195,7 @@ class Task(anytree.NodeMixin):
             if os.path.exists(self.checkpoint_file):
                 continue
             if kind in ('transform', 'split', 'merge'):
-                if os.path.exists(o1) and os.path.getmtime(o1) >= os.path.getmtime(i1):
+                if os.path.exists(o1) and os.path.exists(i1) and os.path.getmtime(o1) >= os.path.getmtime(i1):
                     continue
             elif kind == 'create':
                 if os.path.exists(o1):
@@ -210,7 +210,7 @@ class Task(anytree.NodeMixin):
             if len(need_to_update) == 1 or self.processes == 1 or processes == 1:
                 process_mode, processes = 'sequential mode', 1
             else:
-                processes = min([processes, self.processes])
+                processes = min([processes, self.processes, len(need_to_update)])
                 process_mode = f'parallel mode ({processes} processes)'
             if dry:
                 create_list = '\n    '.join(need_to_create)
@@ -238,7 +238,8 @@ class Task(anytree.NodeMixin):
                 self.yield_outputs = outputs
                 if need_to_cleanup:
                     _ = [delete_path(c) for c in need_to_cleanup]
-                touch_file(self.checkpoint_file)
+                if self.checkpoint_file:
+                    touch_file(self.checkpoint_file)
         else:
             logger.debug(f'Task {self.name} already up to date.')
     
