@@ -1,4 +1,4 @@
 SeqFlow
 =======
 
-`SeqFlow` is a sequence processing pipeline for Python.
+`SeqFlow` is a NGS sequence processing pipeline written in Python.
