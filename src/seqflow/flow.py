@@ -1,46 +1,49 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 import os
 import functools
 import sys
-import shutil
+
 from pathos.multiprocessing import ProcessingPool as Pool
 import anytree
 from anytree.exporter import DotExporter
 from loguru import logger
 
 logger.remove()
-logger.add(sys.stderr, format="<light-green>[{time:YYYY-MM-DD HH:mm:ss}]</light-green> <level>{message}</level>",
-           filter=lambda record: record["level"].name == "TRACE",
-           level="TRACE")
-logger.add(sys.stderr, format="<level>{message}</level>", filter=lambda record: record["level"].name == "DEBUG")
-logger.add(sys.stderr, format="<light-green>[{time:HH:mm:ss}]</light-green> <level>{message}</level>", level="INFO")
+logger.add(sys.stdout, format="<light-green>[{time:YYYY-MM-DD HH:mm:ss}]</light-green> <level>{message}</level>",
+           filter=lambda record: record["level"].name == "TRACE", colorize=True, level="TRACE")
+logger.add(sys.stdout, format="<level>{message}</level>", colorize=True,
+           filter=lambda record: record["level"].name == "DEBUG")
+logger.add(sys.stdout, format="<light-green>[{time:HH:mm:ss}]</light-green> <level>{message}</level>",
+           colorize=True, level="INFO")
 
 
 class task:
     tasks = {}
     
-    def __init__(self, inputs=None, outputs=None, kwargs=None, kind='', parent=None, follow=None, processes=1,
-                 mkdir_before_run=None, cleanup_after_run=None, force_cleanup_on_error=False, checkpoint=False):
+    def __init__(self, inputs=None, outputs=None, parent=None, cpus=1, mkdir=None):
+        """
+        A generic task decorator.
+        
+        :param inputs: None or list, task inputs.
+        :param outputs: list, task outputs.
+        :param parent: callable, parent task.
+        :param cpus: int, maximum number of CPUs current task can use.
+        :param mkdir: None or list, a list of directories need to be created before processing task.
+        """
+        
         self.inputs = inputs
         self.outputs = outputs
-        self.kwargs = kwargs
-        self.kind = kind
         self.parent = parent
-        self.follow = follow
-        self.processes = processes
-        self.dirs = mkdir_before_run
-        self.cleanups = cleanup_after_run
-        self.force_cleanup = force_cleanup_on_error
-        self.checkpoint = checkpoint
+        self.cpus = cpus
+        self.dirs = mkdir
 
     def __call__(self, function):
         self.function = function
-        self.description = function.__doc__
+        self.description = function.__doc__ or function.__name__
         task.tasks[function.__name__] = Task(function.__name__, function.__doc__, self.inputs,
-                                             self.outputs, self.kind, self.parent, self.follow,
-                                             self.processes, self.dirs, self.cleanups, self.force_cleanup,
-                                             self.function, self.checkpoint)
+                                             self.outputs, self.parent, self.cpus, self.dirs, self.function)
         
         @functools.wraps(function)
         def wrapper(*args, **kwargs):
@@ -49,207 +52,125 @@ class task:
         return wrapper
 
 
-def touch_file(filename):
-    with open(filename, 'w') as o:
-        o.write('')
-
-
-def make_folder(folder):
-    if not os.path.isdir(folder):
-        try:
-            os.mkdir(folder)
-        except OSError:
-            raise OSError(f'Cannot create directory {folder}!')
-
-
-def delete_path(path):
-    if os.path.exists(path):
-        if os.path.isfile(path):
-            try:
-                os.unlink(path)
-            except OSError:
-                logger.warning(f'Failed to delete file {path}.')
-        try:
-            shutil.rmtree(path)
-        except Exception as e:
-            logger.warning(f'Failed to delete directory {path}:\n{e}.')
-
-
 class Task(anytree.NodeMixin):
-    def __init__(self, name, description='', inputs='', outputs='', kind='', parent=None,
-                 follow=None, processes=1, dirs=None, cleanups=None, force_cleanup=False, executor=None,
-                 checkpoint=False):
+    def __init__(self, name, description, inputs, outputs, parent, cpus, dirs, executor):
+        """
+        Define the task object.
+        
+        :param name: str, task name.
+        :param description: str, task description.
+        :param inputs: callable or list, task input.
+        :param outputs: list, task output.
+        :param parent: callable, parent task of current task.
+        :param cpus: int, maximum number of CPUs current task can use.
+        :param dirs: list, directories need to be created before task run.
+        :param executor: callable, a function actually processing the task.
+        """
+        
         super(Task, self).__init__()
         self.name = name
-        self.description = description if description else ''
-        self.short_description = description.strip().splitlines()[0] if description else ''
-        self.kind = kind
-        self.inputs = inputs
+        self.description = description
+        self.short_description = description.strip().splitlines()[0]
+        self.inputs = inputs or []
         self.outputs = outputs
-        self.yield_outputs = None
         self.parent = None
         if parent is None:
-            parent_name = inputs.__name__ if callable(inputs) else None
+            self.parent_name = inputs.__name__ if callable(inputs) else None
         else:
             if callable(parent):
-                if callable(inputs):
-                    if inputs.__name__ != parent.__name__:
-                        raise ValueError(f'In task {name}: specified parent {parent.__name__} does not match '
-                                         f'inferred parent {inputs.__name__}.')
-                parent_name = parent.__name__
+                self.parent_name = parent.__name__
             else:
-                raise TypeError(f'In task {name}, invalid parent type was encountered.')
-        self.parent_name = parent_name
-        self.follow = follow
-        self.processes = processes
+                raise TypeError(f'In task {name}, invalid parent type was specified.')
+        self.cpus = cpus
         self.dirs = dirs if dirs else []
-        self.cleanups = cleanups if cleanups else []
-        self.force_cleanup = force_cleanup
         self.executor = executor
-        self.processor = None
-        self.checkpoint_file = f'.{self.name}.done' if checkpoint else ''
     
-    def process(self, dry=True, processes=1, verbose=False):
+    def process(self, dry_run=True, cpus=1):
+        """
+        Process the decorated function by calling it using inputs and outputs.
+        
+        :param dry_run: bool, whether run the actual task or just print out the process.
+        :param cpus: int, maximum number of CPUs current task can use.
+        """
+        
         if self.outputs:
-            if isinstance(self.inputs, (str, list)):
-                pass
-            elif callable(self.outputs):
-                if not self.inputs:
-                    raise TypeError(f'In task {self.name}, invalid type has been specified for inputs when outputs '
-                                    f'were specified using a callable object.')
-            else:
-                raise TypeError(f'In task {self.name}, invalid type has been specified for outputs.')
-        if self.inputs:
-            if isinstance(self.inputs, str):
-                if callable(self.outputs):
-                    self.outputs = self.outputs(self.inputs)
-            elif isinstance(self.inputs, list):
-                if callable(self.outputs):
-                    self.outputs = [self.outputs(i) for i in self.inputs]
-            else:
-                raise TypeError(f'In task {self.name}, invalid type has been specified for inputs.')
-        
-        kind, inputs, outputs = '', [], []
-        if self.inputs:
-            if self.outputs:
-                if isinstance(self.inputs, str):
-                    kind = 'transform' if isinstance(self.outputs, str) else 'split'
-                    inputs = [self.inputs]
-                    outputs = [self.outputs]
-                elif isinstance(self.inputs, list):
-                    if isinstance(self.outputs, str):
-                        kind = 'merge'
-                        inputs = [self.inputs]
-                        outputs = [self.outputs]
-                    else:
-                        kind = 'transform'
-                        inputs = self.inputs
-                        outputs = self.outputs
-            else:
-                kind = 'delete'
-                if isinstance(self.inputs, str):
-                    inputs = [self.inputs]
-                    outputs = [None]
-                else:
-                    inputs = self.inputs
-                    outputs = [None] * len(self.inputs)
+            if not isinstance(self.inputs, list):
+                raise TypeError(f'In task {self.name}, outputs were not specified with a list.')
         else:
-            if self.outputs:
-                kind = 'create'
-                if isinstance(self.outputs, str):
-                    inputs = [None]
-                    outputs = [self.outputs]
-                else:
-                    inputs = [None] * len(self.outputs)
-                    outputs = self.outputs
-            else:
-                raise ValueError(f'In task {self.name}, neither inputs nor outputs has been specified.')
+            raise ValueError(f'In task {self.name}, no outputs were specified.')
+
+        if callable(self.inputs) or isinstance(self.inputs, list):
+            pass
+        else:
+            raise TypeError(f'In task {self.name}, invalid inputs have been specified.')
         
-        if self.kind:
-            msg = f'In task {self.name}, task kind {self.kind} does not match inferred task kind {kind}!'
-            assert self.kind == kind, ValueError(msg)
+        inputs, outputs = self.inputs, self.outputs
+        inputs = inputs if inputs else [''] * len(outputs)
+
         li, lo = len(inputs), len(outputs)
         assert li == lo, (f'In task {self.name}, the number of items in inputs ({li}) does not match '
                           f'the number of items in outputs ({lo})!')
 
-        need_to_update, inputs_need_to_update, outputs_need_to_update = [], [], []
-        need_to_create = [d for d in self.dirs if not os.path.exists(d)]
-        need_to_cleanup = [c for c in self.cleanups if os.path.exists(c)]
+        need_to_update, file_need_to_create = [], []
+        dir_need_to_create = [d for d in self.dirs if not os.path.exists(d)]
         for i, o in zip(inputs, outputs):
-            if i is None:
-                i1 = 'None'
-            elif isinstance(i, str):
-                i1 = i
-            elif isinstance(i, (list, tuple)):
-                i1 = i[0]
-            else:
-                raise TypeError(f'Invalid type for inputs item: {i}.')
-            if o is None:
-                o1 = 'None'
-            elif isinstance(o, str):
-                o1 = o
-            elif isinstance(o, (list, tuple)):
-                o1 = o[0]
-            else:
-                raise TypeError(f'Invalid type for outputs item: {o}.')
-            if os.path.exists(self.checkpoint_file):
-                continue
-            if kind in ('transform', 'split', 'merge'):
-                if os.path.exists(o1) and os.path.exists(i1) and os.path.getmtime(o1) >= os.path.getmtime(i1):
+            if i and os.path.exists(i):
+                if os.path.exists(o) and os.path.getmtime(o) >= os.path.getmtime(i):
                     continue
-            elif kind == 'create':
-                if os.path.exists(o1):
-                    continue
-            elif kind == 'delete':
-                if not os.path.exists(i):
-                    continue
-            need_to_update.append([i1, o1])
-            inputs_need_to_update.append(i)
-            outputs_need_to_update.append(o)
-        if need_to_update:
-            if len(need_to_update) == 1 or self.processes == 1 or processes == 1:
-                process_mode, processes = 'sequential mode', 1
-            else:
-                processes = min([processes, self.processes, len(need_to_update)])
-                process_mode = f'parallel mode ({processes} processes)'
-            if dry:
-                create_list = '\n    '.join(need_to_create)
-                if create_list:
-                    create_list = f'The following director(ies) will be created:\n    {need_to_create}\n'
-                update_list = '\n    '.join([f'{i} --> {o}' for i, o in need_to_update])
-                if update_list:
-                    update_list = (f'The following file(s) will be {kind}{"d" if kind.endswith("e") else "ed"} '
-                                   f'in {process_mode}:\n    {update_list}\n')
-                cleanup_list = '\n    '.join(need_to_cleanup)
-                if cleanup_list:
-                    cleanup_list = f'The following file(s) will be deleted:\n    {cleanup_list}\n'
-                msg = '\n'.join([s for s in (create_list, update_list, cleanup_list) if s])
-                logger.debug(f'Task [{self.name}]:\n{msg}')
-            else:
-                if need_to_create:
-                    _ = [make_folder(d) for d in need_to_create]
-                if verbose:
-                    logger.debug(f'Process task {self.name} in {process_mode}.')
-                if 'sequential' in process_mode:
-                    outputs = [self.executor(i, o) for i, o in need_to_update]
                 else:
-                    with Pool(processes=processes) as pool:
-                        outputs = pool.map(self.executor, inputs_need_to_update, outputs_need_to_update)
-                self.yield_outputs = outputs
-                if need_to_cleanup:
-                    _ = [delete_path(c) for c in need_to_cleanup]
-                if self.checkpoint_file:
-                    touch_file(self.checkpoint_file)
+                    need_to_update.append([i, o])
+            else:
+                if not os.path.exists(o):
+                    file_need_to_create.append(o)
+                    need_to_update.append(['', o])
+
+        if need_to_update:
+            if len(need_to_update) == 1 or self.cpus == 1 or cpus == 1:
+                process_mode, cpus = 'sequential mode', 1
+            else:
+                cpus = min([cpus, self.cpus, len(need_to_update)])
+                process_mode = f'parallel mode ({cpus} processes)'
+            if dry_run:
+                dirs = '\n    '.join(dir_need_to_create)
+                dirs = f'The following director(ies) will be created:\n\t{dirs}\n' if dirs else ''
+                    
+                files = '\n    '.join(file_need_to_create)
+                files = f'The following file(s) will be created in {process_mode}:\n    {files}\n' if files else ''
+                    
+                updates = '\n    '.join([f'{i} --> {o}' for i, o in need_to_update])
+                updates = f'The following file(s) will be updated in {process_mode}:\n    {updates}\n' if updates else ''
+               
+                msg = '\n'.join([s for s in (dirs, files, updates) if s])
+                logger.info(f'Task [{self.name}]:\n{msg}')
+            else:
+                if dir_need_to_create:
+                    _ = [os.mkdir(d) for d in dir_need_to_create]
+
+                logger.info(f'Process task {self.name} in {process_mode}.')
+                if 'sequential' in process_mode:
+                    _ = [self.executor(i, o) for i, o in need_to_update]
+                else:
+                    with Pool(processes=cpus) as pool:
+                        inputs, outputs = [x[0] for x in need_to_update], [x[1] for x in need_to_update]
+                        pool.map(self.executor, inputs, outputs)
         else:
             logger.debug(f'Task {self.name} already up to date.')
     
         
 class Flow:
     def __init__(self, name, description='', short_description=''):
+        """
+        Define a work flow.
+        
+        :param name: str, name of the work flow.
+        :param description: str, description of the work flow.
+        :param short_description: str, short description of the work flow.
+        """
+        
         self.name = name
         if not isinstance(name, str):
             raise TypeError('Workflow name must be as string!')
-        self.description = description
+        self.description = description or ''
         if not isinstance(description, str):
             raise TypeError('Workflow description must be as string!')
         self.short_description = short_description or description.splitlines()[0]
@@ -288,10 +209,17 @@ class Flow:
         task_list = "\n  ".join(tasks)
         logger.debug(f'{self.name} consists of the following {len(tasks)} task(s):\n  {task_list}')
         
-    def run(self, dry=False, processes=1, verbose=False):
+    def run(self, dry_run=False, cpus=1):
+        """
+        Run the defined work flow.
+        
+        :param dry_run: bool, whether run the actual task or just print out the process.
+        :param cpus: int, maximum number of CPUs the work flow can use.
+        """
+        
         for pre, _, node in anytree.RenderTree(self.flow):
             if not node.is_root:
-                node.process(dry=dry, processes=processes, verbose=verbose)
+                node.process(dry_run=dry_run, cpus=cpus)
             
     def print_out(self, style='continued'):
         styles = {'ascii': anytree.render.AsciiStyle(),
