@@ -60,7 +60,7 @@ class Task(anytree.NodeMixin):
         :param name: str, task name.
         :param description: str, task description.
         :param inputs: callable or list, task input.
-        :param outputs: list, task output.
+        :param outputs: callable or list, task output.
         :param parent: callable, parent task of current task.
         :param cpus: int, maximum number of CPUs current task can use.
         :param dirs: list, directories need to be created before task run.
@@ -94,7 +94,11 @@ class Task(anytree.NodeMixin):
         """
         
         if self.outputs:
-            if not isinstance(self.inputs, list):
+            if isinstance(self.outputs, list):
+                pass
+            elif callable(self.outputs):
+                self.outputs = [self.outputs(i) for i in self.inputs]
+            else:
                 raise TypeError(f'In task {self.name}, outputs were not specified with a list.')
         else:
             raise ValueError(f'In task {self.name}, no outputs were specified.')
