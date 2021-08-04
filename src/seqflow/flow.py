@@ -26,12 +26,21 @@ class task:
         """
         A generic task decorator.
         
-        :param inputs: None or list, task inputs.
-        :param outputs: list, task outputs.
+        :param inputs: None, callable object, or list, task inputs.
+        :param outputs: list or callable object, task outputs.
         :param parent: callable, parent task.
         :param cpus: int, maximum number of CPUs current task can use.
         :param mkdir: None or list, a list of directories need to be created before processing task.
         """
+        
+        if inputs is None:
+            if not outputs:
+                raise ValueError('Neither inputs nor outputs was specified!')
+        else:
+            if not callable(inputs) or not isinstance(inputs, list):
+                raise TypeError('Invalid type of inputs, only accepts a callable object or a list.')
+        if not callable(outputs) or not isinstance(outputs, list):
+            raise TypeError('Invalid type of outputs, only accepts a callable object or a list.')
         
         self.inputs = inputs
         self.outputs = outputs
@@ -71,7 +80,7 @@ class Task(anytree.NodeMixin):
         self.name = name
         self.description = description
         self.short_description = description.strip().splitlines()[0]
-        self.inputs = inputs or []
+        self.inputs = inputs
         self.outputs = outputs
         self.parent = None
         if parent is None:
@@ -93,21 +102,6 @@ class Task(anytree.NodeMixin):
         :param cpus: int, maximum number of CPUs current task can use.
         """
         
-        if self.outputs:
-            if isinstance(self.outputs, list):
-                pass
-            elif callable(self.outputs):
-                self.outputs = [self.outputs(i) for i in self.inputs]
-            else:
-                raise TypeError(f'In task {self.name}, outputs were not specified with a list.')
-        else:
-            raise ValueError(f'In task {self.name}, no outputs were specified.')
-
-        if callable(self.inputs) or isinstance(self.inputs, list):
-            pass
-        else:
-            raise TypeError(f'In task {self.name}, invalid inputs have been specified.')
-        
         inputs, outputs = self.inputs, self.outputs
         inputs = inputs if inputs else [''] * len(outputs)
 
@@ -118,15 +112,14 @@ class Task(anytree.NodeMixin):
         need_to_update, file_need_to_create = [], []
         dir_need_to_create = [d for d in self.dirs if not os.path.exists(d)]
         for i, o in zip(inputs, outputs):
-            if i and os.path.exists(i):
-                if os.path.exists(o) and os.path.getmtime(o) >= os.path.getmtime(i):
-                    continue
-                else:
+            if i:
+                if not os.path.exists(i):
+                    raise FileNotFoundError(f'Cannot find file "{i}"!')
+                if not os.path.exists(o) or not os.path.getmtime(o) >= os.path.getmtime(i):
                     need_to_update.append([i, o])
             else:
-                if not os.path.exists(o):
-                    file_need_to_create.append(o)
-                    need_to_update.append(['', o])
+                file_need_to_create.append(o)
+                need_to_update.append(['', o])
 
         if need_to_update:
             if len(need_to_update) == 1 or self.cpus == 1 or cpus == 1:
