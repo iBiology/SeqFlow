@@ -5,7 +5,7 @@ import os
 import functools
 import sys
 
-from pathos.multiprocessing import ProcessingPool as Pool
+from pathos.multiprocessing import ProcessPool as Pool
 import anytree
 from anytree.exporter import DotExporter
 from loguru import logger
@@ -128,14 +128,14 @@ class Task(anytree.NodeMixin):
                 cpus = min([cpus, self.cpus, len(need_to_update)])
                 process_mode = f'parallel mode ({cpus} processes)'
             if dry_run:
-                dirs = '\n    '.join(dir_need_to_create)
+                dirs = '\n\t'.join(dir_need_to_create)
                 dirs = f'The following director(ies) will be created:\n\t{dirs}\n' if dirs else ''
                     
-                files = '\n    '.join(file_need_to_create)
-                files = f'The following file(s) will be created in {process_mode}:\n    {files}\n' if files else ''
+                files = '\n\t'.join(file_need_to_create)
+                files = f'The following file(s) will be created in {process_mode}:\n\t{files}\n' if files else ''
                     
-                updates = '\n    '.join([f'{i} --> {o}' for i, o in need_to_update])
-                updates = f'The following file(s) will be updated in {process_mode}:\n    {updates}\n' if updates else ''
+                updates = '\n\t'.join([f'{i} --> {o}' for i, o in need_to_update])
+                updates = f'The following file(s) will be updated in {process_mode}:\n\t{updates}\n' if updates else ''
                
                 msg = '\n'.join([s for s in (dirs, files, updates) if s])
                 logger.info(f'Task [{self.name}]:\n{msg}')
