@@ -9,6 +9,7 @@ from pathos.multiprocessing import ProcessPool as Pool
 import anytree
 from anytree.exporter import DotExporter
 from loguru import logger
+import cmder
 
 logger.remove()
 logger.add(sys.stdout, format="<light-green>[{time:YYYY-MM-DD HH:mm:ss}]</light-green> <level>{message}</level>",
@@ -82,6 +83,10 @@ def shell(name, description='', inputs=None, outputs=None, parent=None, cpus=1, 
     tasks.append(Task(name, description, inputs, outputs, parent, cpus, mkdir, None, cmd=cmd, env=env))
 
 
+def runner(_input, _output, cmd=None, env=env)
+    replacements = {'input': _input, 'output': _output}
+    cmd = [replacements.get(c, c) for c in cmd]
+    cmder.run(cmd, env=env)
 
 
 class Task(anytree.NodeMixin):
@@ -180,12 +185,16 @@ class Task(anytree.NodeMixin):
                     _ = [os.mkdir(d) for d in dir_need_to_create]
 
                 logger.info(f'Process task {self.name} in {process_mode}.')
+                if self.executor:
+                    executor = self.executor
+                else:
+                    executor = functools.partial(runner, cmd=self.cmd, env=self.env)
                 if 'sequential' in process_mode:
-                    _ = [self.executor(i, o) for i, o in need_to_update]
+                    _ = [executor(i, o) for i, o in need_to_update]
                 else:
                     with Pool(processes=cpus) as pool:
                         inputs, outputs = [x[0] for x in need_to_update], [x[1] for x in need_to_update]
-                        pool.map(self.executor, inputs, outputs)
+                        pool.map(executor, inputs, outputs)
         else:
             logger.debug(f'Task {self.name} already up to date.')
     
