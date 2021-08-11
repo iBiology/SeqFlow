@@ -18,10 +18,10 @@ logger.add(sys.stdout, format="<level>{message}</level>", colorize=True,
 logger.add(sys.stdout, format="<light-green>[{time:HH:mm:ss}]</light-green> <level>{message}</level>",
            colorize=True, level="INFO")
 
+tasks = {}
 
-class task:
-    tasks = {}
-    
+
+class task:    
     def __init__(self, inputs=None, outputs=None, parent=None, cpus=1, mkdir=None):
         """
         A generic task decorator.
@@ -51,14 +51,37 @@ class task:
     def __call__(self, function):
         self.function = function
         self.description = function.__doc__ or function.__name__
-        task.tasks[function.__name__] = Task(function.__name__, function.__doc__, self.inputs,
-                                             self.outputs, self.parent, self.cpus, self.dirs, self.function)
+        tasks[function.__name__] = Task(function.__name__, function.__doc__, self.inputs,
+                                        self.outputs, self.parent, self.cpus, self.dirs, self.function)
         
         @functools.wraps(function)
         def wrapper(*args, **kwargs):
             result = function(*args, **kwargs)
             return result
         return wrapper
+
+
+def shell(name, description='', inputs=None, outputs=None, parent=None, cpus=1, mkdir=None, cmd=None, env=None):
+    """
+    A generic function for adding a Shell task.
+
+    :param name: str, name of the task.
+    :param description: str, description of the task.
+    :param inputs: None, callable object, or list, task inputs.
+    :param outputs: list or callable object, task outputs.
+    :param parent: callable, parent task.
+    :param cpus: int, maximum number of CPUs current task can use.
+    :param mkdir: None or list, a list of directories need to be created before processing task.
+    :param cmd: list or string, a command line list or string processing the task.
+    :param env: dict, extra enverionment variables in a dict passed to shell for calling cmd command.
+    """
+
+    if not name or not isinstance(name, str):
+        raise ValueError('No name was provided or provide name is not a string for a Shell task.')
+    description = description if description else name
+    tasks.append(Task(name, description, inputs, outputs, parent, cpus, mkdir, None, cmd=cmd, env=env))
+
+
 
 
 class Task(anytree.NodeMixin):
@@ -95,17 +118,16 @@ class Task(anytree.NodeMixin):
         self.cpus = cpus
         self.dirs = dirs if dirs else []
         if executor and not callable(executor):
-            logger.error('TypeError: invalid executor, executor must be a callable object.')
-            sys.exit(1)
+            raise TypeError('Invalid executor, executor must be a callable object.')
         self.executor = executor
         if cmd and not isinstance(cmd, (str, list)):
-            logger.error('TypeError: invalid cmd, cmd must be a string or a list.')
-            sys.exit(1)
+            raise TypeError('Invalid cmd, cmd must be a string or a list.')
         slef.cmd = cmd
         if env and not isinstance(env, dict):
-            logger.error('TypeError: invalid env, env must be a dictionary.')
-            sys.exit(1)
+            rai TypeError('Invalid env, env must be a dictionary.')
         slef.env = env
+        if not any([executor, cmd]):
+            raise ValueError('Neither an executor nor cmd was provided.')
 
     
     def process(self, dry_run=True, cpus=1):
@@ -189,7 +211,6 @@ class Flow:
             raise TypeError('Workflow short_description must be as string!')
         
         flow = anytree.Node(self.name, description=self.description, short_description=self.short_description)
-        tasks = task().tasks
         ancestry = [v for k, v in tasks.items() if v.parent_name is None]
         if len(ancestry) == 1:
             ancestry = ancestry[0]
@@ -238,7 +259,7 @@ class Flow:
                   'continue_rounded': anytree.render.ContRoundStyle(),
                   'double': anytree.render.DoubleStyle()}
         if style not in styles:
-            logger.error(f'Invalid style: {style}, using continue_rounded style instead.\nValid style can be one of '
+            logger.warning(f'Invalid style: {style}, using continue_rounded style instead.\nValid style can be one of '
                          f'these: {", ".join(styles)}.')
             style = 'continue'
         for pre, _, node in anytree.RenderTree(self.flow, style=styles[style]):
