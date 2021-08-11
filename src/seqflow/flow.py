@@ -62,7 +62,7 @@ class task:
 
 
 class Task(anytree.NodeMixin):
-    def __init__(self, name, description, inputs, outputs, parent, cpus, dirs, executor):
+    def __init__(self, name, description, inputs, outputs, parent, cpus, dirs, executor, cmd=None, env=None):
         """
         Define the task object.
         
@@ -74,6 +74,8 @@ class Task(anytree.NodeMixin):
         :param cpus: int, maximum number of CPUs current task can use.
         :param dirs: list, directories need to be created before task run.
         :param executor: callable, a function actually processing the task.
+        :param cmd: list or string, a command line list or string processing the task.
+        :param env: dict, extra enverionment variables in a dict passed to shell for calling cmd command.
         """
         
         super(Task, self).__init__()
@@ -92,7 +94,19 @@ class Task(anytree.NodeMixin):
                 raise TypeError(f'In task {name}, invalid parent type was specified.')
         self.cpus = cpus
         self.dirs = dirs if dirs else []
+        if executor and not callable(executor):
+            logger.error('TypeError: invalid executor, executor must be a callable object.')
+            sys.exit(1)
         self.executor = executor
+        if cmd and not isinstance(cmd, (str, list)):
+            logger.error('TypeError: invalid cmd, cmd must be a string or a list.')
+            sys.exit(1)
+        slef.cmd = cmd
+        if env and not isinstance(env, dict):
+            logger.error('TypeError: invalid env, env must be a dictionary.')
+            sys.exit(1)
+        slef.env = env
+
     
     def process(self, dry_run=True, cpus=1):
         """
