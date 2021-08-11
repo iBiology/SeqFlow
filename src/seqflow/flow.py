@@ -19,11 +19,11 @@ logger.add(sys.stdout, format="<level>{message}</level>", colorize=True,
 logger.add(sys.stdout, format="<light-green>[{time:HH:mm:ss}]</light-green> <level>{message}</level>",
            colorize=True, level="INFO")
 
-tasks = {}
 
-
-class task:    
-    def __init__(self, inputs=None, outputs=None, parent=None, cpus=1, mkdir=None):
+class task:
+    tasks = {}
+    
+    def __init__(self, inputs=None, outputs=None, parent=None, cpus=1, mkdir=None, cmd=None, env=None):
         """
         A generic task decorator.
         
@@ -32,6 +32,11 @@ class task:
         :param parent: callable, parent task.
         :param cpus: int, maximum number of CPUs current task can use.
         :param mkdir: None or list, a list of directories need to be created before processing task.
+        :param cmd: list or string, a command line list or string processing the task. If a string was provided,
+            {input} and/or {output} need to be used as placeholders for the actual input and output to be filled.
+            If a list was provided, strings 'input' and/or 'output' need to be used as placeholders for the
+            actual input and output to be replaced.
+        :param env: dict, extra environment variables in a dict need to pass to shell for calling cmd command.
         """
         
         if inputs is None:
@@ -48,12 +53,19 @@ class task:
         self.parent = parent
         self.cpus = cpus
         self.dirs = mkdir
+        if cmd and not isinstance(cmd, (str, list)):
+            raise TypeError('Invalid cmd, cmd must be a string or a list.')
+        self.cmd = cmd
+        if env and not isinstance(env, dict):
+            raise TypeError('Invalid env, env must be a dictionary.')
+        self.env = env
 
     def __call__(self, function):
         self.function = function
         self.description = function.__doc__ or function.__name__
-        tasks[function.__name__] = Task(function.__name__, function.__doc__, self.inputs,
-                                        self.outputs, self.parent, self.cpus, self.dirs, self.function)
+        task.tasks[function.__name__] = Task(function.__name__, function.__doc__, self.inputs,
+                                             self.outputs, self.parent, self.cpus, self.dirs,
+                                             self.function, self.cmd, self.env)
         
         @functools.wraps(function)
         def wrapper(*args, **kwargs):
@@ -62,35 +74,19 @@ class task:
         return wrapper
 
 
-def shell(name, description='', inputs=None, outputs=None, parent=None, cpus=1, mkdir=None, cmd=None, env=None):
-    """
-    A generic function for adding a Shell task.
-
-    :param name: str, name of the task.
-    :param description: str, description of the task.
-    :param inputs: None, callable object, or list, task inputs.
-    :param outputs: list or callable object, task outputs.
-    :param parent: callable, parent task.
-    :param cpus: int, maximum number of CPUs current task can use.
-    :param mkdir: None or list, a list of directories need to be created before processing task.
-    :param cmd: list or string, a command line list or string processing the task.
-    :param env: dict, extra enverionment variables in a dict passed to shell for calling cmd command.
-    """
-
-    if not name or not isinstance(name, str):
-        raise ValueError('No name was provided or provide name is not a string for a Shell task.')
-    description = description if description else name
-    tasks.append(Task(name, description, inputs, outputs, parent, cpus, mkdir, None, cmd=cmd, env=env))
-
-
-def runner(_input, _output, cmd=None, env=env)
+def runner(_input, _output, cmd=None, env=None):
     replacements = {'input': _input, 'output': _output}
-    cmd = [replacements.get(c, c) for c in cmd]
-    cmder.run(cmd, env=env)
+    if isinstance(cmd, str):
+        cmd = cmd.format(**replacements)
+    elif isinstance(cmd, list):
+        cmd = [replacements.get(c, c) for c in cmd]
+    else:
+        raise TypeError('Invalid cmd, cmd must be a string or a list.')
+    cmder.run(cmd, env=env, stdout=sys.stdout, stderr=sys.stderr)
 
 
 class Task(anytree.NodeMixin):
-    def __init__(self, name, description, inputs, outputs, parent, cpus, dirs, executor, cmd=None, env=None):
+    def __init__(self, name, description, inputs, outputs, parent, cpus, dirs, executor, cmd, env):
         """
         Define the task object.
         
@@ -102,8 +98,11 @@ class Task(anytree.NodeMixin):
         :param cpus: int, maximum number of CPUs current task can use.
         :param dirs: list, directories need to be created before task run.
         :param executor: callable, a function actually processing the task.
-        :param cmd: list or string, a command line list or string processing the task.
-        :param env: dict, extra enverionment variables in a dict passed to shell for calling cmd command.
+        :param cmd: list or string, a command line list or string processing the task. If a string was provided,
+            {input} and/or {output} need to be used as placeholders for the actual input and output to be filled.
+            If a list was provided, strings 'input' and/or 'output' need to be used as placeholders for the
+            actual input and output to be replaced.
+        :param env: dict, extra environment variables in a dict need to pass to shell for calling cmd command.
         """
         
         super(Task, self).__init__()
@@ -125,16 +124,11 @@ class Task(anytree.NodeMixin):
         if executor and not callable(executor):
             raise TypeError('Invalid executor, executor must be a callable object.')
         self.executor = executor
-        if cmd and not isinstance(cmd, (str, list)):
-            raise TypeError('Invalid cmd, cmd must be a string or a list.')
-        slef.cmd = cmd
-        if env and not isinstance(env, dict):
-            rai TypeError('Invalid env, env must be a dictionary.')
-        slef.env = env
+        self.cmd = cmd
+        self.env = env
         if not any([executor, cmd]):
-            raise ValueError('Neither an executor nor cmd was provided.')
+            raise ValueError('Neither an executor nor a cmd was provided for processing the task.')
 
-    
     def process(self, dry_run=True, cpus=1):
         """
         Process the decorated function by calling it using inputs and outputs.
@@ -220,6 +214,7 @@ class Flow:
             raise TypeError('Workflow short_description must be as string!')
         
         flow = anytree.Node(self.name, description=self.description, short_description=self.short_description)
+        tasks = task().tasks
         ancestry = [v for k, v in tasks.items() if v.parent_name is None]
         if len(ancestry) == 1:
             ancestry = ancestry[0]
