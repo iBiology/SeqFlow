@@ -158,15 +158,14 @@ class Task(anytree.NodeMixin):
         dir_need_to_create = [d for d in self.dirs if not os.path.exists(d)]
         for i, o in zip(inputs, outputs):
             if i:
-                if not os.path.exists(i):
-                    raise FileNotFoundError(f'Cannot find file "{i}"!')
                 if not os.path.exists(o) or not os.path.getmtime(o) >= os.path.getmtime(i):
                     need_to_update.append([i, o])
             else:
-                file_need_to_create.append(o)
+                if not os.path.exists(o):
+                    file_need_to_create.append(o)
                 need_to_update.append(['', o])
         
-        if need_to_update:
+        if need_to_update or file_need_to_create:
             if len(need_to_update) == 1 or self.cpus == 1 or cpus == 1:
                 process_mode, cpus = 'sequential mode', 1
             else:
@@ -179,7 +178,7 @@ class Task(anytree.NodeMixin):
                 files = '\n\t'.join(file_need_to_create)
                 files = f'The following file(s) will be created in {process_mode}:\n\t{files}\n' if files else ''
                 
-                updates = '\n\t'.join([f'{i} --> {o}' for i, o in need_to_update])
+                updates = '\n\t'.join([f'{i} --> {o}' for i, o in need_to_update if i])
                 updates = f'The following file(s) will be updated in {process_mode}:\n\t{updates}\n' if updates else ''
                 
                 msg = '\n'.join([s for s in (dirs, files, updates) if s])
@@ -255,13 +254,14 @@ class Flow:
         task_list = "\n  ".join(tasks)
         logger.debug(f'{self.name} consists of the following {len(tasks)} task(s):\n  {task_list}')
     
-    def run(self, dry_run=False, cpus=1, verbose=True):
+    def run(self, dry_run=False, cpus=1, verbose=True, target=''):
         """
         Run the defined work flow.
         
         :param dry_run: bool, whether run the actual task or just print out the process.
         :param cpus: int, maximum number of CPUs the work flow can use.
         :param verbose: bool, set to True to print out detailed info for task.
+        :param target: str, name of the target task, work flow will stop after target task has been processed.
         """
         
         if not verbose:
@@ -269,6 +269,9 @@ class Flow:
         for pre, _, node in anytree.RenderTree(self.flow):
             if not node.is_root:
                 node.process(dry_run=dry_run, cpus=cpus)
+                if node.name == target:
+                    logger.info(f'Target task {target} has been processed, work flow will stop here.')
+                    break
     
     def print_out(self, style='continued'):
         styles = {'ascii': anytree.render.AsciiStyle(),
