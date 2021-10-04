@@ -195,7 +195,7 @@ class Task(anytree.NodeMixin):
                 if 'sequential' in process_mode:
                     _ = [executor(i, o) for i, o in need_to_update]
                 else:
-                    with Pool(processes=cpus) as pool:
+                    with Pool(nodes=cpus) as pool:
                         inputs, outputs = [x[0] for x in need_to_update], [x[1] for x in need_to_update]
                         pool.map(executor, inputs, outputs)
         else:
