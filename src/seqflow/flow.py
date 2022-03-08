@@ -163,13 +163,13 @@ class Task(anytree.NodeMixin):
             else:
                 if not os.path.exists(o):
                     file_need_to_create.append(o)
-                # need_to_update.append(['', o])
+                    need_to_update.append(['', o])
         
         if need_to_update or file_need_to_create:
             if len(need_to_update) == 1 or len(file_need_to_create) == 1 or self.cpus == 1 or cpus == 1:
                 process_mode, cpus = 'sequential mode', 1
             else:
-                cpus = min([cpus, self.cpus, len(need_to_update), len(file_need_to_create)])
+                cpus = min([cpus, self.cpus, len(need_to_update) or len(file_need_to_create)])
                 process_mode = f'parallel mode ({cpus} processes)'
             if dry_run:
                 dirs = '\n\t'.join(dir_need_to_create)
