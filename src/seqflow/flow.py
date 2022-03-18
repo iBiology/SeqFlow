@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+"""
+SeqFlow: a framework for easily building NGS pipelines.
+"""
+
 import os
 import functools
 import sys
